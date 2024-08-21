@@ -16,7 +16,7 @@ from pnp_utils import *
 # suppress partial model loading warning
 logging.set_verbosity_error()
 
-class PNP(nn.Module):
+class PNP_VSP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
@@ -35,7 +35,7 @@ class PNP(nn.Module):
         # Create SD models
         print('Loading SD model')
 
-        pipe = StableDiffusionPipeline.from_pretrained(model_key, torch_dtype=torch.float16).to("cuda")
+        pipe = StableDiffusionPipeline.from_pretrained(model_key, torch_dtype=torch.float16).to(self.device)
         pipe.enable_xformers_memory_efficient_attention()
 
         self.vae = pipe.vae
@@ -51,7 +51,8 @@ class PNP(nn.Module):
         self.image, self.eps = self.get_data()
 
         self.text_embeds = self.get_text_embeds(config["prompt"], config["negative_prompt"])
-        self.pnp_guidance_embeds = self.get_text_embeds("", "").chunk(2)[0]
+        self.pnp_guidance_embeds = self.get_text_embeds("", "") if config['use_style_img'] else self.get_text_embeds("", "").chunk(2)[0]
+        
 
 
     @torch.no_grad()
@@ -86,15 +87,20 @@ class PNP(nn.Module):
         image = image.resize((512, 512), resample=Image.Resampling.LANCZOS)
         image = T.ToTensor()(image).to(self.device)
         # get noise
-        latents_path = os.path.join(self.config["latents_path"], os.path.splitext(os.path.basename(self.config["image_path"]))[0], f'noisy_latents_{self.scheduler.timesteps[0]}.pt')
+        latents_path = os.path.join(self.config["latents_path"],  f'noisy_latents_{self.scheduler.timesteps[0]}.pt')
         noisy_latent = torch.load(latents_path).to(self.device)
         return image, noisy_latent
 
     @torch.no_grad()
     def denoise_step(self, x, t):
         # register the time step and features in pnp injection modules
-        source_latents = load_source_latents_t(t, os.path.join(self.config["latents_path"], os.path.splitext(os.path.basename(self.config["image_path"]))[0]))
-        latent_model_input = torch.cat([source_latents] + ([x] * 2))
+        source_latents = load_source_latents_t(t, self.config["latents_path"])
+        
+        if self.config['use_style_img']:
+            style_source_latents = load_source_latents_t(t, self.config["style_latents_path"])
+            latent_model_input = torch.cat([source_latents, style_source_latents] + ([x] * 2))
+        else:
+            latent_model_input = torch.cat([source_latents] + ([x] * 2))
 
         register_time(self, t.item())
 
@@ -105,25 +111,43 @@ class PNP(nn.Module):
         noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embed_input)['sample']
 
         # perform guidance
-        _, noise_pred_uncond, noise_pred_cond = noise_pred.chunk(3)
+        if self.config['use_style_img']:
+            _, _, noise_pred_uncond, noise_pred_cond = noise_pred.chunk(4)
+        else:
+            _, noise_pred_uncond, noise_pred_cond = noise_pred.chunk(3)
         noise_pred = noise_pred_uncond + self.config["guidance_scale"] * (noise_pred_cond - noise_pred_uncond)
 
         # compute the denoising step with the reference model
         denoised_latent = self.scheduler.step(noise_pred, t, x)['prev_sample']
         return denoised_latent
 
-    def init_pnp(self, conv_injection_t, qk_injection_t):
-        self.qk_injection_timesteps = self.scheduler.timesteps[:qk_injection_t] if qk_injection_t >= 0 else []
-        self.conv_injection_timesteps = self.scheduler.timesteps[:conv_injection_t] if conv_injection_t >= 0 else []
-        register_attention_control_efficient(self, self.qk_injection_timesteps)
-        register_conv_control_efficient(self, self.conv_injection_timesteps)
+    def init_pnp(self, conv_injection_t, qk_injection_t, v_injection_t_start=None, v_injection_t_end=None):
+        if self.config['use_style_img']:
+            self.qk_injection_timesteps = self.scheduler.timesteps[:qk_injection_t] if qk_injection_t >= 0 else []
+            self.v_injection_timesteps = self.scheduler.timesteps[v_injection_t_start: v_injection_t_end] if v_injection_t_start < v_injection_t_end else []
+            self.conv_injection_timesteps = self.scheduler.timesteps[:conv_injection_t] if conv_injection_t >= 0 else []
+            register_attention_content_control_efficient(self, self.qk_injection_timesteps)
+            register_attention_style_control_efficient(self, self.v_injection_timesteps)
+            register_conv_content_control_efficient(self, self.conv_injection_timesteps)
+        else:
+            self.qk_injection_timesteps = self.scheduler.timesteps[:qk_injection_t] if qk_injection_t >= 0 else []
+            self.conv_injection_timesteps = self.scheduler.timesteps[:conv_injection_t] if conv_injection_t >= 0 else []
+            register_attention_control_efficient(self, self.qk_injection_timesteps)
+            register_conv_control_efficient(self, self.conv_injection_timesteps)
 
     def run_pnp(self):
         pnp_f_t = int(self.config["n_timesteps"] * self.config["pnp_f_t"])
         pnp_attn_t = int(self.config["n_timesteps"] * self.config["pnp_attn_t"])
-        self.init_pnp(conv_injection_t=pnp_f_t, qk_injection_t=pnp_attn_t)
-        edited_img = self.sample_loop(self.eps)
+        style_attn_t_start = int(self.config["n_timesteps"] * self.config["style_attn_t_start"])
+        style_attn_t_end = int(self.config["n_timesteps"] * self.config["style_attn_t_end"])
+        self.init_pnp(conv_injection_t=pnp_f_t, qk_injection_t=pnp_attn_t,
+                      v_injection_t_start=style_attn_t_start, v_injection_t_end=style_attn_t_end)
+        decoded_latent = self.sample_loop(self.eps)
+        edited_img = T.ToPILImage()(decoded_latent[0])
+        edited_img.save(f'{self.config["output_path"]}/output-{self.config["prompt"]}.png')
 
+        return edited_img
+        
     def sample_loop(self, x):
         with torch.autocast(device_type='cuda', dtype=torch.float32):
             for i, t in enumerate(tqdm(self.scheduler.timesteps, desc="Sampling")):
@@ -147,5 +171,5 @@ if __name__ == '__main__':
     
     seed_everything(config["seed"])
     print(config)
-    pnp = PNP(config)
+    pnp = PNP_VSP(config)
     pnp.run_pnp()

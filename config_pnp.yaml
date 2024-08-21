@@ -14,6 +14,6 @@ n_timesteps: 50
 prompt: a photo of a pink toy horse on the beach
 negative_prompt: ugly, blurry, black, low res, unrealistic
 
-# pnp injection thresholds, ∈ [0, 1]
+# pnp injection thresholds, �늿 [0, 1]
 pnp_attn_t: 0.5
 pnp_f_t: 0.8
