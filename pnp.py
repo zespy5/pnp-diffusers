@@ -135,7 +135,7 @@ class PNP_VSP(nn.Module):
             register_attention_control_efficient(self, self.qk_injection_timesteps)
             register_conv_control_efficient(self, self.conv_injection_timesteps)
 
-    def run_pnp(self):
+    def run(self):
         pnp_f_t = int(self.config["n_timesteps"] * self.config["pnp_f_t"])
         pnp_attn_t = int(self.config["n_timesteps"] * self.config["pnp_attn_t"])
         style_attn_t_start = int(self.config["n_timesteps"] * self.config["style_attn_t_start"])
@@ -172,4 +172,4 @@ if __name__ == '__main__':
     seed_everything(config["seed"])
     print(config)
     pnp = PNP_VSP(config)
-    pnp.run_pnp()
+    pnp.run()
