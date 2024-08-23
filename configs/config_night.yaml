@@ -20,7 +20,7 @@ pnp_f_t: 0.5
 
 # reference style img
 use_style_img: False
-style_latents_path : 'latents_forward/street2'
+style_latents_path : 'latents_forward/daytime'
 
 # style injection thresholds [0, 1]
 style_attn_t_start: 0.8
