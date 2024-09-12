@@ -292,8 +292,8 @@ def register_attention_style_control_efficient(model, injection_schedule):
 
             is_cross = encoder_hidden_states is not None
             encoder_hidden_states = encoder_hidden_states if is_cross else x
-            if not is_cross and self.injection_schedule is not None and (
-                    self.t in self.injection_schedule):
+            if not is_cross and self.style_injection_schedule is not None and (
+                    self.t in self.style_injection_schedule):
                 k = self.to_k(encoder_hidden_states)
                 v = self.to_v(encoder_hidden_states)
 
@@ -332,10 +332,10 @@ def register_attention_style_control_efficient(model, injection_schedule):
 
         return forward
 
-    res_dict = {1: [0, 1, 2], 2: [0, 1, 2], 3: [0, 1, 2]}  # we are injecting attention in blocks 4 - 11 of the decoder, so not in the first block of the lowest resolution
+    res_dict = {1: [1, 2], 2: [0, 1, 2], 3: [0, 1, 2]}  # we are injecting attention in blocks 4 - 11 of the decoder, so not in the first block of the lowest resolution
 
     for res in res_dict:
         for block in res_dict[res]:
             module = model.unet.up_blocks[res].attentions[block].transformer_blocks[0].attn1
             module.forward = sa_v_forward(module)
-            setattr(module, 'injection_schedule', injection_schedule)
+            setattr(module, 'style_injection_schedule', injection_schedule)

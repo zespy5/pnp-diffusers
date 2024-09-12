@@ -82,8 +82,8 @@ class Preprocess(nn.Module):
         return imgs
 
     def load_img(self, image_path):
-        image_pil = T.Resize(512)(Image.open(image_path).convert("RGB"))
-        image = T.ToTensor()(image_pil).unsqueeze(0).to(device)
+        image_pil = T.Resize((512,910))(Image.open(image_path).convert("RGB"))
+        image = T.ToTensor()(image_pil).unsqueeze(0).to(self.device)
         return image
 
     @torch.no_grad()
@@ -176,35 +176,32 @@ def run(opt):
     toy_scheduler.set_timesteps(opt.save_steps)
     timesteps_to_save, num_inference_steps = get_timesteps(toy_scheduler, num_inference_steps=opt.save_steps,
                                                            strength=1.0,
-                                                           device=device)
+                                                           device=opt.device)
 
     seed_everything(opt.seed)
 
     extraction_path_prefix = "_reverse" if opt.extract_reverse else "_forward"
     
 
-    model = Preprocess(device, sd_version=opt.sd_version, hf_key=None)
+    model = Preprocess(opt.device, sd_version=opt.sd_version, hf_key=None)
     
-    data_dir = Path(opt.data_dir)
-    
-    for img in data_dir.glob('*'):
-        save_path = os.path.join(opt.save_dir + extraction_path_prefix, img.stem)
-        os.makedirs(save_path, exist_ok=True)
-        
-        model.extract_latents(data_path=img,
-                              num_steps=opt.steps,
-                              save_path=save_path,
-                              timesteps_to_save=timesteps_to_save,
-                              inversion_prompt=opt.inversion_prompt,
-                              extract_reverse=opt.extract_reverse)
+    save_path = os.path.join(opt.save_dir + extraction_path_prefix,  os.path.splitext(os.path.basename(opt.data_dir))[0])
+    os.makedirs(save_path, exist_ok=True)
+
+    model.extract_latents(data_path=opt.data_dir,
+                            num_steps=opt.steps,
+                            save_path=save_path,
+                            timesteps_to_save=timesteps_to_save,
+                            inversion_prompt=opt.inversion_prompt,
+                            extract_reverse=opt.extract_reverse)
 
 
 
 if __name__ == "__main__":
     device = 'cuda'
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', type=str,
-                        default='data')
+    parser.add_argument('--data_dir', type=str, required=True,
+                        default='data/0.jpg')
     parser.add_argument('--save_dir', type=str, default='latents')
     parser.add_argument('--sd_version', type=str, default='2.1', choices=['1.5', '2.0', '2.1'],
                         help="stable diffusion version")
