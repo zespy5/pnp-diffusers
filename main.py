@@ -42,7 +42,7 @@ if __name__ == "__main__":
     parser.add_argument('--condition', type=str, required=True)
     parser.add_argument('--use_style_img', type=bool, default=False)
     # data
-    parser.add_argument('--latents_path', type=str, required=True, default='latents_forward')
+    parser.add_argument('--latents_path', type=str)
     parser.add_argument('--style_latents_path', type=str, default='')
     # diffusion
     parser.add_argument('--guidance_scale', type=float, default=7.5)
@@ -58,6 +58,8 @@ if __name__ == "__main__":
     opt = parser.parse_args()
     config = vars(parser.parse_args())
     config['image_path'] = opt.data_dir
+    pathlib_img = Path(opt.data_dir)
+    config['latents_path'] = 'latents_forward/'+pathlib_img.stem
     
     processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
     model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large", torch_dtype=torch.float16).to("cuda")
